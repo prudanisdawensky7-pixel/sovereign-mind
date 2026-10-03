@@ -1,0 +1,682 @@
+<!DOCTYPE html>
+<html lang="fr">
+
+<head>
+    <meta charset="UTF-8">
+
+    <meta
+        name="viewport"
+        content="width=device-width, initial-scale=1.0"
+    >
+
+    <title>Sovereign Mind — Administration</title>
+
+    <style>
+
+        * {
+            box-sizing: border-box;
+        }
+
+        body {
+            margin: 0;
+            padding: 30px;
+            font-family: Arial, sans-serif;
+            background: #08090d;
+            color: #ffffff;
+        }
+
+        h1 {
+            color: #d4af37;
+            margin-bottom: 10px;
+        }
+
+        .subtitle {
+            color: #999;
+            margin-bottom: 30px;
+        }
+
+        .stats {
+            display: grid;
+            grid-template-columns:
+                repeat(3, 1fr);
+
+            gap: 15px;
+
+            margin-bottom: 25px;
+        }
+
+        .stat {
+            padding: 20px;
+
+            background: #131620;
+
+            border:
+                1px solid
+                rgba(212,175,55,.25);
+
+            border-radius: 15px;
+        }
+
+        .stat strong {
+            display: block;
+
+            color: #d4af37;
+
+            font-size: 28px;
+
+            margin-top: 8px;
+        }
+
+        .table-container {
+            overflow-x: auto;
+
+            background: #131620;
+
+            border-radius: 15px;
+
+            border:
+                1px solid
+                rgba(255,255,255,.08);
+        }
+
+        table {
+            width: 100%;
+
+            border-collapse: collapse;
+
+            min-width: 1000px;
+        }
+
+        th,
+        td {
+            padding: 15px;
+
+            text-align: left;
+
+            border-bottom:
+                1px solid
+                rgba(255,255,255,.07);
+        }
+
+        th {
+            color: #d4af37;
+
+            background: #10121a;
+        }
+
+        td {
+            color: #ddd;
+        }
+
+        .status {
+            padding: 6px 10px;
+
+            border-radius: 8px;
+
+            font-size: 12px;
+
+            display: inline-block;
+        }
+
+        .pending {
+            background: #3a3215;
+
+            color: #f0d77a;
+        }
+
+        .verification {
+            background: #302515;
+
+            color: #d4af37;
+        }
+
+        .confirmed {
+            background: #17351f;
+
+            color: #7ee2a8;
+        }
+
+        .proof {
+            color: #d4af37;
+
+            text-decoration: underline;
+
+            cursor: pointer;
+        }
+
+        .empty {
+            text-align: center;
+
+            padding: 40px;
+
+            color: #888;
+        }
+
+        .refresh {
+            padding: 12px 20px;
+
+            margin-bottom: 20px;
+
+            border: none;
+
+            border-radius: 10px;
+
+            background: #d4af37;
+
+            color: #08090d;
+
+            font-weight: bold;
+
+            cursor: pointer;
+        }
+
+        @media (max-width: 700px) {
+
+            body {
+                padding: 15px;
+            }
+
+            .stats {
+                grid-template-columns: 1fr;
+            }
+
+        }
+
+    </style>
+
+</head>
+
+
+<body>
+
+    <h1>Sovereign Mind</h1>
+
+    <p class="subtitle">
+        Tableau de gestion des réservations
+    </p>
+
+
+    <button
+        class="refresh"
+        onclick="loadBookings()"
+    >
+        Actualiser les réservations
+    </button>
+
+
+    <div class="stats">
+
+        <div class="stat">
+            Total des réservations
+            <strong id="total">0</strong>
+        </div>
+
+        <div class="stat">
+            Paiements à vérifier
+            <strong id="verification">0</strong>
+        </div>
+
+        <div class="stat">
+            Séances confirmées
+            <strong id="confirmed">0</strong>
+        </div>
+
+    </div>
+
+
+    <div class="table-container">
+
+        <table>
+
+            <thead>
+
+                <tr>
+
+                    <th>Nom</th>
+
+                    <th>Email</th>
+
+                    <th>Téléphone</th>
+
+                    <th>Date</th>
+
+                    <th>Heure</th>
+
+                    <th>Paiement</th>
+
+                    <th>Référence</th>
+
+                    <th>Statut</th>
+
+                </tr>
+
+            </thead>
+
+
+            <tbody id="bookingsTable">
+
+                <tr>
+
+                    <td
+                        colspan="8"
+                        class="empty"
+                    >
+                        Chargement...
+                    </td>
+
+                </tr>
+
+            </tbody>
+
+        </table>
+
+    </div>
+
+
+    <script>
+
+        async function loadBookings() {
+
+            const table =
+                document.getElementById(
+                    "bookingsTable"
+                );
+
+            try {
+
+                const response =
+                    await fetch(
+                        "/api/bookings"
+                    );
+
+
+                const data =
+                    await response.json();
+
+
+                if (!data.success) {
+
+                    throw new Error(
+                        "Erreur"
+                    );
+
+                }
+
+
+                const bookings =
+                    data.bookings || [];
+
+
+                document.getElementById(
+                    "total"
+                ).textContent =
+                    bookings.length;
+
+
+                document.getElementById(
+                    "verification"
+                ).textContent =
+                    bookings.filter(
+                        function (booking) {
+
+                            return (
+                                booking.paymentStatus ===
+                                "verification"
+                            );
+
+                        }
+                    ).length;
+
+
+                document.getElementById(
+                    "confirmed"
+                ).textContent =
+                    bookings.filter(
+                        function (booking) {
+
+                            return (
+                                booking.appointmentStatus ===
+                                "confirmed"
+                            );
+
+                        }
+                    ).length;
+
+
+                if (bookings.length === 0) {
+
+                    table.innerHTML = `
+
+                        <tr>
+
+                            <td
+                                colspan="8"
+                                class="empty"
+                            >
+                                Aucune réservation pour le moment.
+                            </td>
+
+                        </tr>
+
+                    `;
+
+                    return;
+
+                }
+
+
+                table.innerHTML =
+                    bookings.map(
+                        function (booking,index) {
+
+                            let statusClass =
+                                "pending";
+
+                            let statusText =
+                                "En attente";
+
+
+                            if (
+                                booking.paymentStatus ===
+                                "verification"
+                            ) {
+
+                                statusClass =
+                                    "verification";
+
+                                statusText =
+                                    "Paiement à vérifier";
+
+                            }
+
+
+                            if (
+                                booking.appointmentStatus ===
+                                "confirmed"
+                            ) {
+
+                                statusClass =
+                                    "confirmed";
+
+                                statusText =
+                                    "Confirmée";
+
+                            }
+
+return `
+    <tr>
+
+        <td>
+            ${escapeHTML(booking.name)}
+        </td>
+
+        <td>
+            ${escapeHTML(booking.email)}
+        </td>
+
+        <td>
+            ${escapeHTML(booking.phone)}
+        </td>
+
+        <td>
+            ${escapeHTML(booking.date)}
+        </td>
+
+        <td>
+            ${escapeHTML(booking.time)}
+        </td>
+
+        <td>
+            ${
+                booking.paymentProof
+                    ? "Preuve reçue"
+                    : "Non reçue"
+            }
+        </td>
+
+        <td>
+            ${escapeHTML(
+                booking.paymentReference || "-"
+            )}
+        </td>
+
+        <td>
+
+            <span class="status ${statusClass}">
+                ${statusText}
+            </span>
+
+            ${
+                booking.appointmentStatus !== "confirmed" &&
+                booking.paymentStatus !== "rejected"
+
+                ? `
+
+                    <div style="
+                        margin-top:10px;
+                        display:flex;
+                        gap:6px;
+                        flex-wrap:wrap;
+                    ">
+
+                        <button
+                            type="button"
+                            onclick="confirmBooking(${index})"
+                            style="
+                                padding:7px 10px;
+                                border:none;
+                                border-radius:7px;
+                                background:#4caf50;
+                                color:white;
+                                cursor:pointer;
+                            "
+                        >
+                            ✅ Confirmer
+                        </button>
+
+                        <button
+                            type="button"
+                            onclick="rejectBooking(${index})"
+                            style="
+                                padding:7px 10px;
+                                border:none;
+                                border-radius:7px;
+                                background:#b33a3a;
+                                color:white;
+                                cursor:pointer;
+                            "
+                        >
+                            ❌ Refuser
+                        </button>
+
+                    </div>
+
+                `
+                : ""
+            }
+
+        </td>
+
+    </tr>
+`;
+`;
+
+                            `;
+
+                        }
+                    ).join("");
+
+
+            } catch (error) {
+
+                console.error(error);
+
+                table.innerHTML = `
+
+                    <tr>
+
+                        <td
+                            colspan="8"
+                            class="empty"
+                        >
+                            Impossible de charger les réservations.
+                        </td>
+
+                    </tr>
+
+                `;
+
+            }
+
+        }
+
+
+        function escapeHTML(text) {
+
+            return String(text || "")
+
+                .replaceAll("&", "&amp;")
+
+                .replaceAll("<", "&lt;")
+
+                .replaceAll(">", "&gt;")
+
+                .replaceAll('"', "&quot;")
+
+                .replaceAll("'", "&#039;");
+
+        }
+
+
+        loadBookings();
+// ==========================================
+// ACTIONS ADMINISTRATEUR
+// ==========================================
+
+async function confirmBooking(index) {
+
+    const confirmation = confirm(
+        "Confirmer cette réservation ?"
+    );
+
+    if (!confirmation) {
+        return;
+    }
+
+    try {
+
+        const response = await fetch(
+            "/api/admin/booking-action",
+            {
+                method: "POST",
+
+                headers: {
+                    "Content-Type": "application/json"
+                },
+
+                body: JSON.stringify({
+                    index: index,
+                    action: "confirm"
+                })
+            }
+        );
+
+
+        const data = await response.json();
+
+
+        if (!data.success) {
+
+            alert(
+                data.message ||
+                "Impossible de confirmer la réservation."
+            );
+
+            return;
+        }
+
+
+        alert(
+            "✅ La séance a été confirmée."
+        );
+
+
+        loadBookings();
+
+    } catch (error) {
+
+        console.error(error);
+
+        alert(
+            "Erreur de communication avec le serveur."
+        );
+
+    }
+}
+
+
+async function rejectBooking(index) {
+
+    const confirmation = confirm(
+        "Refuser ce paiement et cette réservation ?"
+    );
+
+    if (!confirmation) {
+        return;
+    }
+
+    try {
+
+        const response = await fetch(
+            "/api/admin/booking-action",
+            {
+                method: "POST",
+
+                headers: {
+                    "Content-Type": "application/json"
+                },
+
+                body: JSON.stringify({
+                    index: index,
+                    action: "reject"
+                })
+            }
+        );
+
+
+        const data = await response.json();
+
+
+        if (!data.success) {
+
+            alert(
+                data.message ||
+                "Impossible de refuser la réservation."
+            );
+
+            return;
+        }
+
+
+        alert(
+            "❌ Le paiement a été refusé."
+        );
+
+
+        loadBookings();
+
+    } catch (error) {
+
+        console.error(error);
+
+        alert(
+            "Erreur de communication avec le serveur."
+        );
+
+    }
+}
+    </script>
+
+</body>
+
+</html>
