@@ -1,11 +1,11 @@
 // =========================================
 // SOVEREIGN MIND
-// SERVER.JS
+// SERVER.JS - PostgreSQL
 // =========================================
 
 const express = require("express");
 const path = require("path");
-const fs = require("fs");
+const { Pool } = require("pg");
 
 const app = express();
 
@@ -13,53 +13,27 @@ const PORT = process.env.PORT || 3000;
 
 
 // =========================================
-// DOSSIERS
+// POSTGRESQL
 // =========================================
+
+if (!process.env.DATABASE_URL) {
+    console.error("DATABASE_URL n'est pas configurée.");
+    process.exit(1);
+}
+
+const pool = new Pool({
+    connectionString: process.env.DATABASE_URL,
+    ssl: {
+        rejectUnauthorized: false
+    }
+});
+
+
+// =========================================
+// SITE
+// =========================================
+
 const publicFolder = __dirname;
-
-const dataFolder =
-    path.join(__dirname, "data");
-
-const proofsFolder =
-    path.join(dataFolder, "payment-proofs");
-
-
-// Créer les dossiers automatiquement
-
-if (!fs.existsSync(dataFolder)) {
-    fs.mkdirSync(dataFolder, {
-        recursive: true
-    });
-}
-
-
-if (!fs.existsSync(proofsFolder)) {
-    fs.mkdirSync(proofsFolder, {
-        recursive: true
-    });
-}
-
-
-// =========================================
-// FICHIERS DE DONNÉES
-// =========================================
-
-const bookingsFile =
-    path.join(
-        dataFolder,
-        "bookings.json"
-    );
-
-
-if (!fs.existsSync(bookingsFile)) {
-
-    fs.writeFileSync(
-        bookingsFile,
-        "[]",
-        "utf8"
-    );
-
-}
 
 
 // =========================================
@@ -68,76 +42,63 @@ if (!fs.existsSync(bookingsFile)) {
 
 app.use(
     express.json({
-        limit: "1mb"
+        limit: "10mb"
     })
 );
-
 
 app.use(
     express.urlencoded({
         extended: true,
-        limit: "1mb"
+        limit: "10mb"
     })
 );
 
-
-// =========================================
-// SITE PUBLIC
-// =========================================
-
-app.use(
-    express.static(publicFolder)
-);
+app.use(express.static(publicFolder));
 
 
 // =========================================
-// FONCTIONS
+// BASE DE DONNÉES
 // =========================================
 
-function getBookings() {
+async function initializeDatabase() {
 
-    try {
+    await pool.query(`
+        CREATE TABLE IF NOT EXISTS bookings (
+            id TEXT PRIMARY KEY,
 
-        const content =
-            fs.readFileSync(
-                bookingsFile,
-                "utf8"
-            );
+            name TEXT NOT NULL,
+            email TEXT NOT NULL,
+            phone TEXT NOT NULL,
 
-        return JSON.parse(content);
+            language TEXT DEFAULT 'fr',
 
-    } catch (error) {
+            date TEXT NOT NULL,
+            time TEXT NOT NULL,
 
-        console.error(
-            "Erreur lecture bookings:",
-            error
-        );
+            message TEXT DEFAULT '',
 
-        return [];
+            payment_status TEXT DEFAULT 'pending',
+            appointment_status TEXT DEFAULT 'pending',
+            status TEXT DEFAULT 'pending',
 
-    }
+            payment_proof TEXT,
+            payment_reference TEXT DEFAULT '',
 
+            payment_received_at TIMESTAMPTZ,
+            confirmed_at TIMESTAMPTZ,
+            rejected_at TIMESTAMPTZ,
+
+            created_at TIMESTAMPTZ DEFAULT NOW()
+        )
+    `);
+
+    console.log("PostgreSQL: table bookings prête.");
 }
 
 
-function saveBookings(bookings) {
-
-    fs.writeFileSync(
-
-        bookingsFile,
-
-        JSON.stringify(
-            bookings,
-            null,
-            2
-        ),
-
-        "utf8"
-
-    );
-
-}
-
+// =========================================
+// ID
+// =========================================
 
 function createId() {
 
@@ -148,27 +109,99 @@ function createId() {
             .toString(36)
             .substring(2, 8)
     );
-
 }
 
 
 // =========================================
-// TEST SERVEUR
+// FORMAT RÉSERVATION
+// =========================================
+
+function formatBooking(row) {
+
+    return {
+
+        id: row.id,
+
+        name: row.name,
+        email: row.email,
+        phone: row.phone,
+
+        language: row.language,
+
+        date: row.date,
+        time: row.time,
+
+        message: row.message,
+
+        paymentStatus:
+            row.payment_status,
+
+        appointmentStatus:
+            row.appointment_status,
+
+        status:
+            row.status,
+
+        paymentProof:
+            row.payment_proof,
+
+        paymentReference:
+            row.payment_reference,
+
+        paymentReceivedAt:
+            row.payment_received_at,
+
+        confirmedAt:
+            row.confirmed_at,
+
+        rejectedAt:
+            row.rejected_at,
+
+        createdAt:
+            row.created_at
+    };
+}
+
+
+// =========================================
+// HEALTH
 // =========================================
 
 app.get(
     "/health",
-    function (req, res) {
+    async function (req, res) {
 
-        res.json({
+        try {
 
-            success: true,
+            await pool.query("SELECT 1");
 
-            message:
-                "Sovereign Mind server is ready"
+            res.json({
 
-        });
+                success: true,
 
+                status: "ok",
+
+                database: "connected"
+
+            });
+
+        } catch (error) {
+
+            console.error(
+                "Erreur PostgreSQL:",
+                error
+            );
+
+            res.status(500).json({
+
+                success: false,
+
+                status: "error",
+
+                database: "disconnected"
+
+            });
+        }
     }
 );
 
@@ -179,7 +212,7 @@ app.get(
 
 app.post(
     "/api/bookings",
-    function (req, res) {
+    async function (req, res) {
 
         try {
 
@@ -195,8 +228,6 @@ app.post(
 
             } = req.body;
 
-
-            // Vérification
 
             if (
                 !name ||
@@ -218,59 +249,67 @@ app.post(
             }
 
 
-            const bookings =
-                getBookings();
+            const bookingId =
+                createId();
 
 
-            const booking = {
+            await pool.query(
+                `
+                INSERT INTO bookings (
+                    id,
+                    name,
+                    email,
+                    phone,
+                    language,
+                    date,
+                    time,
+                    message,
+                    payment_status,
+                    appointment_status,
+                    status
+                )
 
-                id: createId(),
+                VALUES (
+                    $1,
+                    $2,
+                    $3,
+                    $4,
+                    $5,
+                    $6,
+                    $7,
+                    $8,
+                    'pending',
+                    'pending',
+                    'pending'
+                )
+                `,
+                [
 
-                name: name,
+                    bookingId,
 
-                email: email,
+                    name,
 
-                phone: phone,
+                    email,
 
-                language:
+                    phone,
+
                     language || "fr",
 
-                date: date,
+                    date,
 
-                time: time,
+                    time,
 
-                message:
-                    message || "",
+                    message || ""
 
-                paymentStatus:
-                    "pending",
-
-                appointmentStatus:
-                    "pending",
-
-                paymentProof:
-                    null,
-
-                paymentReference:
-                    null,
-
-                createdAt:
-                    new Date().toISOString()
-
-            };
-
-
-            bookings.push(booking);
-
-
-            saveBookings(bookings);
+                ]
+            );
 
 
             console.log("");
             console.log(
-                "Nouvelle réservation :"
+                "Nouvelle réservation :",
+                bookingId
             );
-            console.log(booking);
             console.log("");
 
 
@@ -282,14 +321,17 @@ app.post(
                     "Réservation enregistrée.",
 
                 bookingId:
-                    booking.id
+                    bookingId
 
             });
 
 
         } catch (error) {
 
-            console.error(error);
+            console.error(
+                "Erreur réservation:",
+                error
+            );
 
 
             return res.status(500).json({
@@ -302,24 +344,18 @@ app.post(
             });
 
         }
-
     }
 );
 
 
 // =========================================
-// RECEVOIR LA PREUVE DE PAIEMENT
-// =========================================
-//
-// NOTE : cette version reçoit la preuve
-// sous forme Base64 depuis le navigateur.
-// Elle sera enregistrée dans le dossier
-// payment-proofs.
+// COMPATIBILITÉ
+// create-booking
 // =========================================
 
 app.post(
-    "/api/payment-proof",
-    function (req, res) {
+    "/api/create-booking",
+    async function (req, res) {
 
         try {
 
@@ -331,9 +367,152 @@ app.post(
                 language,
                 date,
                 time,
+                message
+
+            } = req.body;
+
+
+            if (
+                !name ||
+                !email ||
+                !phone ||
+                !date ||
+                !time
+            ) {
+
+                return res.status(400).json({
+
+                    success: false,
+
+                    message:
+                        "Veuillez remplir tous les champs obligatoires."
+
+                });
+
+            }
+
+
+            const bookingId =
+                createId();
+
+
+            await pool.query(
+                `
+                INSERT INTO bookings (
+                    id,
+                    name,
+                    email,
+                    phone,
+                    language,
+                    date,
+                    time,
+                    message
+                )
+
+                VALUES (
+                    $1,
+                    $2,
+                    $3,
+                    $4,
+                    $5,
+                    $6,
+                    $7,
+                    $8
+                )
+                `,
+                [
+
+                    bookingId,
+
+                    name,
+
+                    email,
+
+                    phone,
+
+                    language || "fr",
+
+                    date,
+
+                    time,
+
+                    message || ""
+
+                ]
+            );
+
+
+            console.log("");
+            console.log(
+                "Nouvelle réservation :",
+                bookingId
+            );
+            console.log("");
+
+
+            return res.json({
+
+                success: true,
+
+                message:
+                    "Réservation enregistrée.",
+
+                bookingId:
+                    bookingId
+
+            });
+
+
+        } catch (error) {
+
+            console.error(
+                "Erreur create-booking:",
+                error
+            );
+
+
+            return res.status(500).json({
+
+                success: false,
+
+                message:
+                    "Erreur lors de l'enregistrement."
+
+            });
+
+        }
+    }
+);
+
+
+// =========================================
+// PREUVE DE PAIEMENT
+// =========================================
+
+app.post(
+    "/api/payment-proof",
+    async function (req, res) {
+
+        try {
+
+            const {
+
+                bookingId,
+
+                name,
+                email,
+                phone,
+
+                language,
+
+                date,
+                time,
+
                 message,
+
                 paymentName,
                 paymentReference,
+
                 paymentProof
 
             } = req.body;
@@ -361,177 +540,195 @@ app.post(
             }
 
 
-            const bookings =
-                getBookings();
+            let booking;
 
 
-            // Chercher la réservation
+            // =================================
+            // RECHERCHER PAR BOOKING ID
+            // =================================
 
-            let booking =
-                bookings.find(function (item) {
+            if (bookingId) {
 
-                    return (
-                        item.name === name &&
-                        item.email === email &&
-                        item.date === date &&
-                        item.time === time
+                const result =
+                    await pool.query(
+                        `
+                        SELECT *
+                        FROM bookings
+                        WHERE id = $1
+                        `,
+                        [bookingId]
                     );
 
-                });
+
+                if (result.rows.length > 0) {
+
+                    booking =
+                        result.rows[0];
+
+                }
+
+            }
 
 
-            // Si elle n'existe pas encore,
-            // on la crée.
+            // =================================
+            // RECHERCHE DE SECOURS
+            // =================================
 
             if (!booking) {
 
-                booking = {
+                const result =
+                    await pool.query(
+                        `
+                        SELECT *
+                        FROM bookings
 
-                    id: createId(),
+                        WHERE name = $1
+                        AND email = $2
+                        AND date = $3
+                        AND time = $4
 
-                    name: name,
+                        ORDER BY created_at DESC
 
-                    email: email,
+                        LIMIT 1
+                        `,
+                        [
 
-                    phone: phone,
+                            name,
 
-                    language:
+                            email,
+
+                            date,
+
+                            time
+
+                        ]
+                    );
+
+
+                if (result.rows.length > 0) {
+
+                    booking =
+                        result.rows[0];
+
+                }
+
+            }
+
+
+            // =================================
+            // SI PAS DE RÉSERVATION
+            // =================================
+
+            if (!booking) {
+
+                const newId =
+                    createId();
+
+
+                await pool.query(
+                    `
+                    INSERT INTO bookings (
+                        id,
+                        name,
+                        email,
+                        phone,
+                        language,
+                        date,
+                        time,
+                        message
+                    )
+
+                    VALUES (
+                        $1,
+                        $2,
+                        $3,
+                        $4,
+                        $5,
+                        $6,
+                        $7,
+                        $8
+                    )
+                    `,
+                    [
+
+                        newId,
+
+                        name,
+
+                        email,
+
+                        phone,
+
                         language || "fr",
 
-                    date: date,
+                        date,
 
-                    time: time,
+                        time,
 
-                    message:
-                        message || "",
+                        message || ""
 
-                    paymentStatus:
-                        "pending",
+                    ]
+                );
 
-                    appointmentStatus:
-                        "pending",
 
-                    paymentProof:
-                        null,
+                const result =
+                    await pool.query(
+                        `
+                        SELECT *
+                        FROM bookings
+                        WHERE id = $1
+                        `,
+                        [newId]
+                    );
 
-                    paymentReference:
-                        null,
 
-                    createdAt:
-                        new Date().toISOString()
-
-                };
-
-                bookings.push(booking);
+                booking =
+                    result.rows[0];
 
             }
 
 
             // =================================
-            // TRAITEMENT DE LA PREUVE
+            // ENREGISTRER LA PREUVE
             // =================================
 
-            let proofData =
-                paymentProof;
+            await pool.query(
+                `
+                UPDATE bookings
 
+                SET
 
-            let extension =
-                "jpg";
+                    payment_proof = $1,
 
+                    payment_reference = $2,
 
-            if (
-                typeof proofData === "string" &&
-                proofData.includes(",")
-            ) {
+                    payment_status = 'verification',
 
-                const parts =
-                    proofData.split(",");
+                    appointment_status = 'pending',
 
-                proofData =
-                    parts[1];
+                    status = 'pending',
 
+                    payment_received_at = NOW()
 
-                const header =
-                    parts[0];
+                WHERE id = $3
+                `,
+                [
 
+                    paymentProof,
 
-                if (
-                    header.includes("png")
-                ) {
+                    paymentReference || "",
 
-                    extension =
-                        "png";
+                    booking.id
 
-                }
-
-                else if (
-                    header.includes("jpeg")
-                ) {
-
-                    extension =
-                        "jpg";
-
-                }
-
-            }
-
-
-            const fileName =
-                `${booking.id}.${extension}`;
-
-
-            const filePath =
-                path.join(
-                    proofsFolder,
-                    fileName
-                );
-
-
-            const imageBuffer =
-                Buffer.from(
-                    proofData,
-                    "base64"
-                );
-
-
-            fs.writeFileSync(
-                filePath,
-                imageBuffer
+                ]
             );
-
-
-            // =================================
-            // METTRE À JOUR LA RÉSERVATION
-            // =================================
-
-            booking.paymentProof =
-                fileName;
-
-
-            booking.paymentReference =
-                paymentReference || "";
-
-
-            booking.paymentStatus =
-                "verification";
-
-
-            booking.appointmentStatus =
-                "pending";
-
-
-            booking.paymentReceivedAt =
-                new Date().toISOString();
-
-
-            saveBookings(bookings);
 
 
             console.log("");
             console.log(
-                "Preuve de paiement reçue :"
+                "Preuve de paiement reçue :",
+                booking.id
             );
-            console.log(booking);
             console.log("");
 
 
@@ -566,40 +763,248 @@ app.post(
             });
 
         }
-
     }
 );
 
 
 // =========================================
-// TABLEAU DES RÉSERVATIONS
-// =========================================
-//
-// Pour le moment cette route est locale.
-// Nous construirons l'accès administrateur
-// sécurisé ensuite.
+// LISTE DES RÉSERVATIONS
 // =========================================
 
 app.get(
     "/api/bookings",
-    function (req, res) {
+    async function (req, res) {
 
-        const bookings =
-            getBookings();
+        try {
+
+            const result =
+                await pool.query(
+                    `
+                    SELECT *
+                    FROM bookings
+
+                    ORDER BY created_at DESC
+                    `
+                );
 
 
-        res.json({
+            const bookings =
+                result.rows.map(
+                    formatBooking
+                );
 
-            success: true,
 
-            count:
-                bookings.length,
+            res.json({
 
-            bookings:
-                bookings
+                success: true,
 
-        });
+                count:
+                    bookings.length,
 
+                bookings:
+                    bookings
+
+            });
+
+
+        } catch (error) {
+
+            console.error(
+                "Erreur lecture bookings:",
+                error
+            );
+
+
+            res.status(500).json({
+
+                success: false,
+
+                message:
+                    "Impossible de récupérer les réservations."
+
+            });
+
+        }
+    }
+);
+
+
+// =========================================
+// ACTION ADMIN
+// =========================================
+
+app.post(
+    "/api/admin/booking-action",
+    async function (req, res) {
+
+        try {
+
+            const index =
+                Number(req.body.index);
+
+            const action =
+                req.body.action;
+
+
+            if (
+                !Number.isInteger(index) ||
+                !["confirm", "reject"]
+                    .includes(action)
+            ) {
+
+                return res.status(400).json({
+
+                    success: false,
+
+                    message:
+                        "Action invalide."
+
+                });
+
+            }
+
+
+            const result =
+                await pool.query(
+                    `
+                    SELECT *
+                    FROM bookings
+
+                    ORDER BY created_at DESC
+                    `
+                );
+
+
+            if (!result.rows[index]) {
+
+                return res.status(404).json({
+
+                    success: false,
+
+                    message:
+                        "Réservation introuvable."
+
+                });
+
+            }
+
+
+            const booking =
+                result.rows[index];
+
+
+            // =================================
+            // CONFIRMER
+            // =================================
+
+            if (action === "confirm") {
+
+                await pool.query(
+                    `
+                    UPDATE bookings
+
+                    SET
+
+                        payment_status =
+                            'verified',
+
+                        appointment_status =
+                            'confirmed',
+
+                        status =
+                            'confirmed',
+
+                        confirmed_at =
+                            NOW()
+
+                    WHERE id = $1
+                    `,
+                    [booking.id]
+                );
+
+            }
+
+
+            // =================================
+            // REFUSER
+            // =================================
+
+            else {
+
+                await pool.query(
+                    `
+                    UPDATE bookings
+
+                    SET
+
+                        payment_status =
+                            'rejected',
+
+                        appointment_status =
+                            'rejected',
+
+                        status =
+                            'rejected',
+
+                        rejected_at =
+                            NOW()
+
+                    WHERE id = $1
+                    `,
+                    [booking.id]
+                );
+
+            }
+
+
+            const updated =
+                await pool.query(
+                    `
+                    SELECT *
+                    FROM bookings
+                    WHERE id = $1
+                    `,
+                    [booking.id]
+                );
+
+
+            return res.json({
+
+                success: true,
+
+                message:
+                    action === "confirm"
+
+                        ? "Séance confirmée."
+
+                        : "Paiement refusé.",
+
+                booking:
+                    formatBooking(
+                        updated.rows[0]
+                    )
+
+            });
+
+
+        } catch (error) {
+
+            console.error(
+                "Erreur action admin:",
+                error
+            );
+
+
+            return res.status(500).json({
+
+                success: false,
+
+                message:
+                    "Erreur serveur."
+
+            });
+
+        }
     }
 );
 
@@ -623,100 +1028,9 @@ app.get(
 );
 
 
-// ==========================================
-// ADMIN - CONFIRMER / REFUSER UNE RESERVATION
-// ==========================================
-
-
-app.post("/api/admin/booking-action", function (req, res) {
-
-    try {
-
-        const index = Number(req.body.index);
-        const action = req.body.action;
-
-        if (
-            !Number.isInteger(index) ||
-            !["confirm", "reject"].includes(action)
-        ) {
-            return res.status(400).json({
-                success: false,
-                message: "Action invalide."
-            });
-        }
-
-        if (!fs.existsSync(bookingsFile)) {
-            return res.status(404).json({
-                success: false,
-                message: "Fichier bookings.json introuvable."
-            });
-        }
-
-        const bookings = JSON.parse(
-            fs.readFileSync(bookingsFile, "utf8")
-        );
-
-        if (!Array.isArray(bookings) || !bookings[index]) {
-            return res.status(404).json({
-                success: false,
-                message: "Réservation introuvable."
-            });
-        }
-
-        const booking = bookings[index];
-
-        if (action === "confirm") {
-
-            booking.paymentStatus = "verified";
-            booking.appointmentStatus = "confirmed";
-            booking.status = "confirmed";
-            booking.confirmedAt = new Date().toISOString();
-
-        } else if (action === "reject") {
-
-            booking.paymentStatus = "rejected";
-            booking.appointmentStatus = "rejected";
-            booking.status = "rejected";
-            booking.rejectedAt = new Date().toISOString();
-
-        }
-
-        fs.writeFileSync(
-            bookingsFile,
-            JSON.stringify(bookings, null, 2),
-            "utf8"
-        );
-
-        return res.json({
-            success: true,
-            message:
-                action === "confirm"
-                    ? "Séance confirmée."
-                    : "Paiement refusé.",
-            booking: booking
-        });
-
-    } catch (error) {
-
-        console.error(
-            "Erreur action administrateur :",
-            error
-        );
-
-        return res.status(500).json({
-            success: false,
-            message: "Erreur serveur."
-        });
-    }
-
-});
-
-
 // =========================================
 // ROUTE INCONNUE
 // =========================================
-
-
 
 app.use(
     function (req, res) {
@@ -737,41 +1051,75 @@ app.use(
 // =========================================
 // DÉMARRAGE
 // =========================================
-app.listen(
-    PORT,
-    function () {
 
-        console.log("");
+async function startServer() {
 
-        console.log(
-            "======================================="
+    try {
+
+        await initializeDatabase();
+
+
+        app.listen(
+            PORT,
+            function () {
+
+                console.log("");
+                console.log(
+                    "======================================="
+                );
+
+                console.log(
+                    "       SOVEREIGN MIND SERVER"
+                );
+
+                console.log(
+                    "======================================="
+                );
+
+                console.log("");
+
+                console.log(
+                    `Server running on http://localhost:${PORT}`
+                );
+
+                console.log("");
+
+                console.log(
+                    "PostgreSQL connected."
+                );
+
+                console.log("");
+
+                console.log(
+                    "Health check: /health"
+                );
+
+                console.log("");
+
+                console.log(
+                    "======================================="
+                );
+
+            }
         );
 
-        console.log(
-            "       SOVEREIGN MIND SERVER"
+
+    } catch (error) {
+
+        console.error("");
+
+        console.error(
+            "Impossible de démarrer le serveur:"
         );
 
-        console.log(
-            "======================================="
-        );
+        console.error(error);
 
-        console.log("");
+        console.error("");
 
-        console.log(
-            `Server running on http://localhost:${PORT}`
-        );
-
-        console.log("");
-
-        console.log(
-            `Health check: http://localhost:${PORT}/health`
-        );
-
-        console.log("");
-
-        console.log(
-            "======================================="
-        );
+        process.exit(1);
 
     }
-);
+}
+
+
+startServer();
